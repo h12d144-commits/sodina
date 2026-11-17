@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeCane AI - 고령 시각장애인 스마트 지팡이 캡 & 음성 가이드</title>
+  <!-- TensorFlow.js 및 COCO-SSD 모델 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-card: #1e293b;
+      --bg-inner: #020617;
+      --border-color: #334155;
+      --accent-blue: #38bdf8;
+      --accent-yellow: #fde047;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --safe: #10b981;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      line-height: 1.5;
+      padding: 20px 16px 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .wrapper {
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 헤더 영역 */
+    header {
+      text-align: center;
+      padding-bottom: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--text-primary);
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+
+    header h1 span {
+      color: var(--accent-blue);
+    }
+
+    header p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+    }
+
+    /* 공통 카드 스타일 */
+    .card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-pill {
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent-blue);
+    }
+
+    /* 1. 실시간 음성 모니터 */
+    .tts-monitor {
+      background-color: var(--bg-inner);
+      border-left: 5px solid var(--accent-blue);
+      border-radius: 10px;
+      padding: 14px 16px;
+      min-height: 68px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      transition: border-color 0.25s ease;
+    }
+
+    .tts-meta {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    #ttsOutput {
+      font-size: 1.08rem;
+      font-weight: 700;
+      color: var(--accent-yellow);
+      word-break: keep-all;
+    }
+
+    /* 2. 웹캠 AI 비전 영역 */
+    .vision-viewport {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background-color: var(--bg-inner);
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .vision-placeholder {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      padding: 20px;
+      z-index: 1;
+    }
+
+    .upper-zone-guide {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 55%;
+      border-bottom: 1px dashed rgba(239, 68, 68, 0.65);
+      background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0) 100%);
+      pointer-events: none;
+      z-index: 2;
+      display: none;
+    }
+
+    .upper-zone-label {
+      position: absolute;
+      bottom: 4px;
+      right: 8px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #fca5a5;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .hud-bar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      z-index: 3;
+      pointer-events: none;
+    }
+
+    .hud-chip {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid #475569;
+      color: var(--text-primary);
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 9px;
+      border-radius: 6px;
+    }
+
+    .btn-main {
+      width: 100%;
+      margin-top: 12px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 800;
+      color: #0f172a;
+      background-color: var(--accent-blue);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .btn-main:hover:not(:disabled) {
+      opacity: 0.92;
+    }
+
+    .btn-main:active:not(:disabled) {
+      transform: scale(0.99);
+    }
+
+    .btn-main:disabled {
+      background-color: #475569;
+      color: #cbd5e1;
+      cursor: not-allowed;
+    }
+
+    /* 3. 시나리오 즉시 시연 버튼 */
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .scenario-btn {
+      background-color: var(--bg-inner);
+      border: 1.5px solid var(--border-color);
+      border-radius: 12px;
+      padding: 12px;
+      text-align: left;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .scenario-btn:active {
+      transform: scale(0.98);
+    }
+
+    .scenario-btn strong {
+      display: block;
+      font-size: 0.88rem;
+      margin-bottom: 3px;
+    }
+
+    .scenario-btn span {
+      display: block;
+      font-size: 0.74rem;
+      color: var(--text-secondary);
+    }
+
+    .scenario-btn.danger:hover { border-color: var(--danger); }
+    .scenario-btn.safe:hover { border-color: var(--safe); }
+    .scenario-btn.warning:hover { border-color: var(--warning); }
+
+    /* 4. 센서 연동 슬라이더 */
+    .control-group {
+      margin-bottom: 14px;
+    }
+
+    .control-group:last-child {
+      margin-bottom: 0;
+    }
+
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.84rem;
+      margin-bottom: 6px;
+    }
+
+    .control-value {
+      font-weight: 700;
+      color: var(--accent-blue);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      border-radius: 5px;
+      background: #334155;
+      outline: none;
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+    }
+
+    /* 5. 기획 배경 및 데이터 근거 요약 */
+    .evidence-box {
+      background-color: rgba(15, 23, 42, 0.7);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .evidence-box h3 {
+      font-size: 0.85rem;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .evidence-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .evidence-list li strong {
+      color: var(--accent-blue);
+    }
+
+    @media (max-width: 420px) {
+      .scenario-grid {
+        grid-template-columns: 1fr;
+      }
+      header h1 {
+        font-size: 1.32rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="wrapper">
+    <!-- 헤더 -->
+    <header>
+      <div class="badge">AI 융합 창업 프로토타입 · 탈부착형 지팡이 캡</div>
+      <h1>🦯 <span>SafeCane AI</span> 보행 안전 가이드</h1>
+      <p>고령 시각장애인을 위한 상체 장애물 탐지 및 오픈형 음성 안내 시스템</p>
+    </header>
+
+    <!-- 1. 실시간 음성 안내 모니터 -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">🔊 오픈형·골전도 이어폰 음성 안내 (TTS)</div>
+        <div class="status-pill" id="volumeBadge">음량: 표준 (100%)</div>
+      </div>
+      <div class="tts-monitor" id="ttsMonitor">
+        <div class="tts-meta">
+          <span id="ttsCategory">시스템 대기 중</span>
+          <span>속도: 1.02x (고령자 맞춤)</span>
+        </div>
+        <div id="ttsOutput">버튼을 눌러 보행 안내 또는 시뮬레이션을 시작하세요.</div>
+      </div>
+    </section>
+
+    <!-- 2. 실시간 웹캠 AI 비전 인식 -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">📷 지팡이 캡 비전 AI (COCO-SSD)</div>
+        <div class="status-pill" id="visionStatus">대기 중</div>
+      </div>
+      <div class="vision-viewport">
+        <div class="hud-bar">
+          <span class="hud-chip" id="hudTof">ToF 거리: 2.5m</span>
+          <span class="hud-chip" id="hudNoise">주변 소음: 55dB</span>
+        </div>
+        <div class="upper-zone-guide" id="upperZoneGuide">
+          <span class="upper-zone-label">▲ 상체·머리 높이 위험 감지 구역</span>
+        </div>
+        <div class="vision-placeholder" id="visionPlaceholder">
+          카메라를 켜면 신호등, 차량, 상체 높이 장애물을<br />실시간으로 분석하여 음성으로 안내합니다.
+        </div>
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="overlayCanvas"></canvas>
+      </div>
+      <button class="btn-main" id="startCameraBtn" onclick="startVisionAI()">실시간 카메라 AI 탐지 시작</button>
+    </section>
+
+    <!-- 3. 핵심 상황 즉시 시연 버튼 (발표·평가용) -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">🧪 핵심 보행 위험 시나리오 즉시 시연</div>
+        <span style="font-size: 0.75rem; color: var(--text-secondary);">클릭 시 음성 출력</span>
+      </div>
+      <div class="scenario-grid">
+        <button class="scenario-btn danger" onclick="runScenario('upper_obstacle')">
+          <strong>🚧 상체 높이 장애물</strong>
+          <span>돌출 간판·나뭇가지 (1.2m 접근)</span>
+        </button>
+        <button class="scenario-btn danger" onclick="runScenario('red_light')">
+          <strong>🚦 음향신호기 없는 적색 신호</strong>
+          <span>횡단보도 앞 정지 음성 안내</span>
+        </button>
+        <button class="scenario-btn safe" onclick="runScenario('green_light')">
+          <strong>🟢 횡단보도 녹색 신호</strong>
+          <span>보행 개시 및 좌우 확인 안내</span>
+        </button>
+        <button class="scenario-btn warning" onclick="runScenario('unsignalized_car')">
+          <strong>🚗 비신호 횡단보도 차량 접근</strong>
+          <span>측면 접근 차량 긴급 경고</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- 4. 하드웨어 센서 연동 시뮬레이션 -->
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">📡 ToF 상체 센서 & 주변 소음 적응형 제어</div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">
+          <span>상체 높이 장애물 접근 거리 (ToF 센서)</span>
+          <span class="control-value" id="tofValueText">2.5 m (안전)</span>
+        </div>
+        <input type="range" id="tofSlider" min="0.5" max="4.0" step="0.1" value="2.5" oninput="handleSensorChange()" />
+      </div>
+      <div class="control-group">
+        <div class="control-label">
+          <span>도로 주변 환경 소음 (음성 출력 자동 보정)</span>
+          <span class="control-value" id="noiseValueText">55 dB (표준)</span>
+        </div>
+        <input type="range" id="noiseSlider" min="40" max="85" step="1" value="55" oninput="handleSensorChange()" />
+      </div>
+    </section>
+
+    <!-- 5. 기획 배경 및 데이터 근거 -->
+    <section class="evidence-box">
+      <h3>📊 문제 정의 및 설계 근거 (71세 고령 시각장애인 페르소나)</h3>
+      <ul class="evidence-list">
+        <li>• <strong>인프라 사각지대:</strong> 신호등 설치 횡단보도(11만 7,484개) 중 음향신호기 설치율은 <strong>34%</strong>에 불과하며(서울 66.08%, 울산 7.8% 등 지역 편차 심각), 비신호 횡단보도(서울시 내 2만 5,509개)는 차량 접근 판별이 불가함.</li>
+        <li>• <strong>노화 신체 특성 반영:</strong> 고령화로 감각 전도 속도가 저하되어 진동·촉각 인지가 어려우므로, 귀를 막지 않는 <strong>오픈형·골전도 음성 안내</strong>로 안전성과 인지력을 동시에 확보함.</li>
+      </ul>
+    </section>
+  </div>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('overlayCanvas');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startCameraBtn');
+    const visionStatus = document.getElementById('visionStatus');
+    const placeholder = document.getElementById('visionPlaceholder');
+    const upperZoneGuide = document.getElementById('upperZoneGuide');
+
+    let model = null;
+    let isDetecting = false;
+    let lastSpokenKey = '';
+    let lastSpokenTime = 0;
+    let speechVolume = 0.72; // 표준 음량
+
+    // 한국어 객체 라벨 매핑
+    const koObjectNames = {
+      'person': '보행자',
+      'car': '승용차',
+      'truck': '트럭',
+      'bus': '버스',
+      'motorcycle': '오토바이',
+      'bicycle': '자전거',
+      'traffic light': '횡단보도 신호등',
+      'stop sign': '정지 표지판',
+      'chair': '돌출 장애물(의자)',
+      'potted plant': '가로수·화분 장애물',
+      'umbrella': '상체 높이 장애물'
+    };
+
+    // 4가지 핵심 시나리오 데이터
+    const scenarioPresets = {
+      upper_obstacle: {
+        category: '🚧 상체 장애물 경고',
+        color: '#ef4444',
+        text: '주의하세요. 전방 1.2미터 상체 높이에 돌출 간판이 감지되었습니다.'
+      },
+      red_light: {
+        category: '🚦 보행 신호 안내',
+        color: '#ef4444',
+        text: '음향신호기 미설치 구역입니다. 현재 적색 신호이니 횡단보도 앞에서 정지하세요.'
+      },
+      green_light: {
+        category: '🟢 보행 신호 안내',
+        color: '#10b981',
+        text: '녹색 보행 신호로 변경되었습니다. 좌우 접근 차량을 살피며 건너가세요.'
+      },
+      unsignalized_car: {
+        category: '🚗 비신호 횡단보도 경고',
+        color: '#f59e0b',
+        text: '비신호 횡단보도입니다. 측면에서 차량이 접근 중이니 절대 건너지 마세요.'
+      }
+    };
+
+    // 한국어 음성 출력 함수 (4초 쿨타임 적용)
+    function speakAlert(key, category, message, borderColor = '#38bdf8', force = false) {
+      const now = Date.now();
+      if (!force && key === lastSpokenKey && (now - lastSpokenTime) < 4000) {
+        return;
+      }
+
+      lastSpokenKey = key;
+      lastSpokenTime = now;
+
+      // 화면 모니터 업데이트
+      const monitor = document.getElementById('ttsMonitor');
+      document.getElementById('ttsCategory').textContent = category;
+      document.getElementById('ttsOutput').textContent = `"${message}"`;
+      monitor.style.borderLeftColor = borderColor;
+
+      // Web Speech API 음성 출력
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(message);
+        utterance.lang = 'ko-KR';
+        utterance.rate = 1.02; // 고령자가 듣기 편한 속도
+        utterance.volume = speechVolume;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+
+    // 즉시 시연 버튼 클릭 핸들러
+    function runScenario(type) {
+      const preset = scenarioPresets[type];
+      if (!preset) return;
+      speakAlert(type, preset.category, preset.text, preset.color, true);
+    }
+
+    // ToF 거리 및 주변 소음 슬라이더 제어
+    function handleSensorChange() {
+      const dist = parseFloat(document.getElementById('tofSlider').value);
+      const noise = parseInt(document.getElementById('noiseSlider').value, 10);
+
+      // HUD 업데이트
+      document.getElementById('hudTof').textContent = `ToF 거리: ${dist.toFixed(1)}m`;
+      document.getElementById('hudNoise').textContent = `주변 소음: ${noise}dB`;
+
+      // 주변 소음에 따른 골전도/오픈형 음량 자동 증폭 (표준 -> +20% -> +40%)
+      const volumeBadge = document.getElementById('volumeBadge');
+      const noiseText = document.getElementById('noiseValueText');
+
+      if (noise >= 70) {
+        speechVolume = 1.0;
+        volumeBadge.textContent = '음량: 최대 증폭 (+40%)';
+        volumeBadge.style.color = '#ef4444';
+        volumeBadge.style.background = 'rgba(239, 68, 68, 0.18)';
+        noiseText.textContent = `${noise} dB (고소음 +40% 증폭)`;
+      } else if (noise >= 58) {
+        speechVolume = 0.86;
+        volumeBadge.textContent = '음량: 자동 증폭 (+20%)';
+        volumeBadge.style.color = '#f59e0b';
+        volumeBadge.style.background = 'rgba(245, 158, 11, 0.18)';
+        noiseText.textContent = `${noise} dB (중소음 +20% 증폭)`;
+      } else {
+        speechVolume = 0.72;
+        volumeBadge.textContent = '음량: 표준 (100%)';
+        volumeBadge.style.color = '#38bdf8';
+        volumeBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+        noiseText.textContent = `${noise} dB (표준)`;
+      }
+
+      // ToF 상체 장애물 거리 판별 (1.3m 이내 긴급 경고)
+      const tofText = document.getElementById('tofValueText');
+      if (dist <= 1.3) {
+        tofText.textContent = `${dist.toFixed(1)} m (긴급 위험)`;
+        tofText.style.color = '#ef4444';
+        speakAlert(
+          'tof_danger',
+          '📡 ToF 상체 센서 긴급 경고',
+          `긴급 경고. 전방 ${dist.toFixed(1)}미터 머리 높이에 장애물이 접근했습니다. 멈추세요.`,
+          '#ef4444',
+          false
+        );
+      } else {
+        tofText.textContent = `${dist.toFixed(1)} m (안전)`;
+        tofText.style.color = '#38bdf8';
+      }
+    }
+
+    // 실시간 웹캠 및 COCO-SSD(lite_mobilenet_v2) AI 실행
+    async function startVisionAI() {
+      startBtn.disabled = true;
+      startBtn.textContent = 'AI 비전 모델 로딩 중...';
+      visionStatus.textContent = '모델 불러오는 중';
+
+      try {
+        model = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: false
+        });
+
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          placeholder.style.display = 'none';
+          upperZoneGuide.style.display = 'block';
+          isDetecting = true;
+
+          visionStatus.textContent = '실시간 탐지 작동 중';
+          visionStatus.style.color = '#10b981';
+          visionStatus.style.background = 'rgba(16, 185, 129, 0.18)';
+          startBtn.textContent = 'AI 보행 보호 시스템 가동 중';
+
+          speakAlert('system_start', '✅ 시스템 가동', 'SafeCane AI 보행 안전 음성 안내를 시작합니다.', '#10b981', true);
+          detectLoop();
+        };
+      } catch (err) {
+        visionStatus.textContent = '카메라 연결 실패';
+        visionStatus.style.color = '#ef4444';
+        startBtn.disabled = false;
+        startBtn.textContent = '실시간 카메라 AI 탐지 다시 시도';
+        alert('카메라 권한이 허용되지 않았거나 지원하지 않는 환경입니다.\n하단의 [핵심 보행 위험 시나리오 즉시 시연] 버튼과 센서 슬라이더로 모든 음성 기능을 테스트하실 수 있습니다.');
+      }
+    }
+
+    async function detectLoop() {
+      if (!isDetecting) return;
+
+      const predictions = await model.detect(video);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      predictions.forEach(pred => {
+        if (pred.score < 0.55) return;
+
+        const [x, y, width, height] = pred.bbox;
+        const centerYRatio = (y + height / 2) / canvas.height;
+        const areaRatio = (width * height) / (canvas.width * canvas.height);
+
+        // 화면 상단~중단(Y비율 0.55 미만)에 위치한 객체는 상체·머리 높이 위험 구역으로 판별
+        const isUpperHazard = centerYRatio < 0.55;
+        const labelKo = koObjectNames[pred.class] || pred.class;
+        const confidence = Math.round(pred.score * 100);
+
+        const boxColor = isUpperHazard ? '#ef4444' : '#38bdf8';
+
+        // 바운딩 박스 그리기
+        ctx.strokeStyle = boxColor;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, width, height);
+
+        // 라벨 배경 및 텍스트
+        const tagText = `${isUpperHazard ? '[상체위험] ' : ''}${labelKo} ${confidence}%`;
+        ctx.font = 'bold 14px Pretendard, sans-serif';
+        const textWidth = ctx.measureText(tagText).width;
+
+        ctx.fillStyle = boxColor;
+        ctx.fillRect(x, y > 24 ? y - 24 : y, textWidth + 12, 24);
+
+        ctx.fillStyle = isUpperHazard ? '#ffffff' : '#0f172a';
+        ctx.fillText(tagText, x + 6, y > 24 ? y - 7 : y + 17);
+
+        // 상황별 자동 음성 안내 트리거
+        if (pred.class === 'traffic light') {
+          speakAlert(
+            'vision_traffic_light',
+            '🚦 비전 AI 신호등 인식',
+            '전방에 횡단보도 신호등이 인식되었습니다. 보행 신호를 확인하세요.',
+            '#38bdf8'
+          );
+        } else if (['car', 'truck', 'bus', 'motorcycle'].includes(pred.class) && areaRatio > 0.12) {
+          speakAlert(
+            `vision_vehicle_${pred.class}`,
+            '🚗 접근 차량 경고',
+            `주의하세요. 전방에 ${labelKo}가 가까이 접근하고 있습니다.`,
+            '#f59e0b'
+          );
+        } else if (isUpperHazard && areaRatio > 0.10) {
+          speakAlert(
+            `vision_upper_${pred.class}`,
+            '🚧 상체·머리 높이 장애물 탐지',
+            `주의하세요. 전방 상체 높이에 ${labelKo} 장애물이 감지되었습니다.`,
+            '#ef4444'
+          );
+        }
+      });
+
+      requestAnimationFrame(detectLoop);
+    }
+  </script>
+</body>
+</html>
